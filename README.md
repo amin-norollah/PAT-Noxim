@@ -14,6 +14,10 @@ shortcomings in design and post-design stages. PAT-Noxim, developed based on Acc
 to simulate a NoC in power consumption, area, delay and temperature models. PAT-Noxim is developed to support
 several predefined and custom architectures.
 
+**If you use PAT-Noxim in your research, we would appreciate the following citation in any publications to which it has contributed:**
+
+Amin Norollah, Danesh Derafshi, Hakem Beitollahi, and Ahmad Patooghy. 2018. PAT-Noxim: A Precise Power & Thermal Cycle-Accurate NoC Simulator. 31st international IEEE SoC (System-on-Chip) Conference (SOCC 2018).
+
 
 Structure
 ------------
