@@ -12,7 +12,7 @@ Therefore, developing a precise tool to calculate the aforementioned attributes 
 need to evaluate their proposed techniques in a NoC simulated environment. So, we propose PAT-Noxim to address the
 shortcomings in design and post-design stages. PAT-Noxim, developed based on Access-Noxim, provides an environment
 to simulate a NoC in power consumption, area, delay and temperature models. PAT-Noxim is developed to support
-several predefined and custom architectures.
+several predefined and custom architectures. it can be downloaded under GPL license terms.
 
 **If you use PAT-Noxim in your research, we would appreciate the following citation in any publications to which it has contributed:**
 
@@ -44,3 +44,61 @@ Change list for the latest version of PAT-Noxim:
 12.	Obtaining temperature feedback from tiles to calculate leakage current by TEI in a specific time interval.
 13.	Increasing the accuracy of power and thermal measurements in sub-90 nm manufacturing technologies.
 14.	Bug fixes 
+
+How to Install
+------------
+First, you need to install SystemC 2.2.0 (Follow the link: https://github.com/systemc/systemc-2.2.0)
+
+  1. Change to the top level directory (systemc-2.2)
+
+  2. Create a temporary directory, e.g.,
+  
+    $ mkdir objdir
+
+  3. Change to the temporary directory, e.g.,
+  
+    $ cd objdir
+	$ sudo apt-get install tcsh
+	$ tcsh
+	$ setenv CXX g++
+
+  4. Configure the package for your system, e.g.,
+     (The configure script is explained below.)
+	 
+    $ ../configure
+	
+  5. Compile the package.
+  
+	$ gmake
+	$ gmake install
+    $ cd ..
+    $ rm -rf objdir
+	$ exit
+	
+  6. make sure directory "lib-linux" exist! if this name is "lib-linux64", rename it to "lib-linux".
+  
+To install the PAT-Noxim, you need to follow a few simple steps.
+
+	$ cd PAT-Noxim/bin
+	$ make
+    $ make install
+
+Description of simulator components
+------------
+Some of the main simulator files are listed in the following table:
+
+Files | Description
+--- | ---
+NoximParameters.h | All of the pre-compile settings are in this file (for PAT-Noxim, Orion and Hotspot)
+NoximMain.cpp | Link the simulator to various components
+NoximNoC.cpp | Defines the overall structure of the network
+NoximRouter.cpp | Router architectures includes. Routing algorithms are defined in this file
+NoximProcessingElement.cpp | Includes the Processing Element(PE) architecture for sending and receiving messages
+NoximVLink.cpp | Determines the policy of communication between the tiles in the third dimension
+NoximTile.h | Defining and connecting components of a tile, consisting of the router and the PE
+NoximVCState.cpp | Defines the virtual channel states on the router
+NoximPower.cpp | The power consumption and the area of the network components are calculated in this section
+
+
+
+
