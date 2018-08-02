@@ -1,6 +1,8 @@
 PAT-Noxim - the NoC Simulator
 =============================
 
+![alt text](https://github.com/amin-norollah/PAT-Noxim/blob/master/pat-noxim.png)
+
 Welcome to the PAT-Noxim, cycle accurate Network-on-Chip(NoC) simulator.
 
 
