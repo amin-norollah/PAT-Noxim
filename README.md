@@ -18,7 +18,7 @@ several predefined and custom architectures. it can be downloaded under GPL lice
 
 **If you use PAT-Noxim in your research, we would appreciate the following citation in any publications to which it has contributed:**
 
-Amin Norollah, Danesh Derafshi, Hakem Beitollahi, and Ahmad Patooghy, "PAT-Noxim: A Precise Power & Thermal Cycle-Accurate NoC Simulator", 31st international IEEE SoC (System-on-Chip) Conference (SOCC 2018).
+A. Norollah, D. Derafshi, H. Beitollahi and A. Patooghy, "PAT-Noxim: A Precise Power & Thermal Cycle-Accurate NoC Simulator," 2018 31st IEEE International System-on-Chip Conference (SOCC), Arlington, VA, USA, 2018, pp. 163-168. doi: 10.1109/SOCC.2018.8618491
 
 
 Structure
