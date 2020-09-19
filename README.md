@@ -18,8 +18,9 @@ several predefined and custom architectures. it can be downloaded under GPL lice
 
 **If you use PAT-Noxim in your research, we would appreciate the following citation in any publications to which it has contributed:**
 
-A. Norollah, D. Derafshi, H. Beitollahi and A. Patooghy, "PAT-Noxim: A Precise Power & Thermal Cycle-Accurate NoC Simulator," 2018 31st IEEE International System-on-Chip Conference (SOCC), Arlington, VA, USA, 2018, pp. 163-168. doi: 10.1109/SOCC.2018.8618491
+A. Norollah, D. Derafshi, H. Beitollahi and A. Patooghy, "PAT-Noxim: A Precise Power & Thermal Cycle-Accurate NoC Simulator," 2018 31st IEEE International System-on-Chip Conference (SOCC), Arlington, VA, USA, 2018, pp. 163-168. doi: [10.1109/SOCC.2018.8618491](https://doi.org/10.1109/SOCC.2018.8618491)
 
+ >Get in touch with me by [a.norollah.official@gmail.com](mailto:a.norollah.official@gmail.com)
 
 Structure
 ------------
@@ -45,7 +46,8 @@ Change list for the latest version of PAT-Noxim:
 11.	Measuring leakage current by TEI Through improved Orion 3.0
 12.	Obtaining temperature feedback from tiles to calculate leakage current by TEI in a specific time interval.
 13.	Increasing the accuracy of power and thermal measurements in sub-90 nm manufacturing technologies.
-14.	Bug fixes 
+14.	Report the chip surface temperature once every 100,000 cycles.
+15.	Bug fixes 
 
 How to Install
 ------------
