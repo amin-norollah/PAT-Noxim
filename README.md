@@ -8,13 +8,13 @@ Welcome to the PAT-Noxim, cycle accurate Network-on-Chip(NoC) simulator.
 
 Description
 ------------
-Networks-on-Chip (NoCs) have proven to be a low-latency and highly scalable in many-core architectures.
-Due to the importance of scalability, designers try to optimize latency, power and temperature across the network.
-Therefore, developing a precise tool to calculate the aforementioned attributes is of utmost importance. Designers
-need to evaluate their proposed techniques in a NoC simulated environment. So, we propose PAT-Noxim to address the
-shortcomings in design and post-design stages. PAT-Noxim, developed based on Access-Noxim, provides an environment
-to simulate a NoC in power consumption, area, delay and temperature models. PAT-Noxim is developed to support
-several predefined and custom architectures. it can be downloaded under GPL license terms.
+Networks-on-Chip (NoCs) have proven to be a low-latency and highly scalable in many-core architectures. Due to the importance of scalability, designers try to optimize latency, power and temperature across the network. Therefore, developing a precise tool to calculate the aforementioned attributes is of utmost importance. Designers need to evaluate their proposed techniques in a NoC simulated environment. So, we propose PAT-Noxim to address the shortcomings in design and post-design stages. PAT-Noxim, developed based on Access-Noxim, provides an environment to simulate a NoC in power consumption, area, delay and temperature models.
+
+PAT-Noxim utilizes a power and thermal model that takes into account the effects of both the NoC traffic and the surrounding environment. The model is highly configurable, allowing users to adjust a range of parameters and settings to reflect their specific use cases.
+
+The results of experiments conducted using PAT-Noxim demonstrate its effectiveness in accurately modeling power consumption and thermal behavior in NoCs. The simulator can be used to identify and address potential issues related to power and thermal management in NoCs, leading to improved system performance and reliability. Overall, PAT-Noxim represents a significant step forward in the field of NoC simulation and has the potential to be a valuable tool for researchers and practitioners alike.
+
+PAT-Noxim is developed to support several predefined and custom architectures. it can be downloaded under GPL license terms.
 
 **If you use PAT-Noxim in your research, we would appreciate the following citation in any publications to which it has contributed:**
 
