@@ -20,17 +20,19 @@
 
 using namespace std;
 
-// need to be globally visible to allow "-volume" simulation stop
+// Global variable to track the total volume of flits/packets drained during simulation
+// This is used for simulation stopping condition when "-volume" option is specified
 unsigned int drained_volume;
-// Log file stream
-ofstream results_log_pwr_router;    //Initial in NoximLog, record in thermal_IF.cpp
-ofstream results_log_pwr_mac;
-ofstream results_log_pwr_mem;
-ofstream transient_log_throughput;  //Initial in NoximLog, record in NoximNoC.cpp
-ofstream log_get_error;
-ofstream transient_topology;
-ofstream static_log_power;
-ofstream temp_tei_power;
+
+// Log file streams for recording various simulation metrics
+ofstream results_log_pwr_router;    // Logs router power consumption (initialized in NoximLog, recorded in thermal_IF.cpp)
+ofstream results_log_pwr_mac;       // Logs MAC (Multiply-Accumulate) unit power consumption
+ofstream results_log_pwr_mem;       // Logs memory power consumption
+ofstream transient_log_throughput;  // Logs transient throughput metrics (initialized in NoximLog, recorded in NoximNoC.cpp)
+ofstream log_get_error;             // Logs any errors encountered during simulation
+ofstream transient_topology;        // Logs transient topology changes (e.g., throttling, beltway activation)
+ofstream static_log_power;          // Logs static power consumption over time
+ofstream temp_tei_power;            // Logs temperature effect inversion (TEI) power data
 // Initialize global configuration parameters (can be overridden with command-line arguments)
 int                          NoximGlobalParams::verbose_mode                  = DEFAULT_VERBOSE_MODE;
 int                          NoximGlobalParams::trace_mode                    = DEFAULT_TRACE_MODE;
@@ -86,10 +88,12 @@ int                          NoximGlobalParams::dynamic_throt_case			  = 0;
 
 //---------------------------------------------------------------------------
 
+// SystemC main function - entry point of the simulation
+// This function initializes the NoC simulator and runs the simulation
 int sc_main(int arg_num, char *arg_vet[])
 //int main()		//for windows
 {
-    // TEMP
+    // Initialize the drained volume counter to zero at the start of simulation
     drained_volume = 0;
 
 	////////////////////////////////////////
@@ -99,7 +103,7 @@ int sc_main(int arg_num, char *arg_vet[])
 	////			Baseline NOC		////
 	////////////////////////////////////////
 	
-    // Handle command-line arguments
+    // Display simulation header information
 	cout << "\t//////////////////////////////////////////// "<< endl;
 	cout << "\t////\tNoxim - the NoC Simulator\t//// "<< endl;
 	cout << "\t////\t(C) University of Catania\t//// "<< endl;
@@ -108,32 +112,41 @@ int sc_main(int arg_num, char *arg_vet[])
 	cout << "\t////\t\tversion IUST\t\t//// "<< endl;
 	cout << "\t//////////////////////////////////////////// "<< endl << endl << endl;
 
+    // Parse command-line arguments to configure simulation parameters
     parseCmdLine(arg_num, arg_vet);			//for linux
 
-    // Signals
+    // Create SystemC clock signal (1 nanosecond period)
     sc_clock clock("clock", 1, SC_NS);
+    // Create reset signal for the NoC
     sc_signal <bool> reset;
 
-    // NoC instance
+    // Instantiate the Network-on-Chip (NoC) module
     NoximNoC *n = new NoximNoC("NoC");
+    // Connect clock and reset signals to the NoC instance
     n->clock(clock);
     n->reset(reset);
 
-	//Log files
+	// Initialize logging system for simulation results
 	NoximLog log;
+	// Create results directory for storing output files
 	if(!mkdir("results",0777)) cout<<"Making new directory results"<<endl;
 	//if (!_mkdir("results")) cout << "Making new directory results" << endl;
+	// Enable signal tracing if trace mode is enabled
 	if (NoximGlobalParams::trace_mode)log.TraceSignal(n);
-	log.PowerLog();//Transient power tracefile 
-	log.Throughput();
-	log.staticPowerLog();
+	// Initialize log files for different metrics
+	log.PowerLog();        // Transient power trace file
+	log.Throughput();      // Throughput logging
+	log.staticPowerLog();  // Static power logging
 	
-    // Reset the chip and run the simulation
+    // Reset phase: Assert reset signal and hold it for DEFAULT_RESET_TIME cycles
     reset.write(1);
     cout << "Reset...";
+    // Initialize random number generator with the configured seed
     srand(NoximGlobalParams::rnd_generator_seed);	// time(NULL));
 	//DEFAULT_RESET_TIME = # of simulation cycle
+    // Run simulation for reset duration (DEFAULT_RESET_TIME cycles)
     sc_start(DEFAULT_RESET_TIME * CYCLE_PERIOD + 1, SC_NS);
+    // De-assert reset signal to start normal operation
     reset.write(0);
 	cout << "done!\nNow running for " << NoximGlobalParams::simulation_time << " cycles..." << endl;
 	cout << "|----------------------- ProgressBar ----------------------|" << endl;
@@ -150,22 +163,25 @@ int sc_main(int arg_num, char *arg_vet[])
 		
 	// }
 	// sc_start(NoximGlobalParams::simulation_time * CYCLE_PERIOD - getCurrentCycleNum() , SC_NS);
+	// Run the main simulation for the specified number of cycles
 	sc_start(NoximGlobalParams::simulation_time * CYCLE_PERIOD , SC_NS);
 
-    // Close the simulation
+    // Simulation complete - perform cleanup and final reporting
 	cout << "Noxim simulation completed."                        << endl;
     cout << " ( " << getCurrentCycleNum() << " cycles executed)" << endl;
     
+	// Close all log files and finalize logging
 	if (NoximGlobalParams::trace_mode)log.TraceEnd();
-	log.BufferLog(n);
-	log.TrafficLog(n);
-	log.PowerLogEnd();
-	log.ThroughputEnd();
-	log.staticPowerLogEnd();
+	log.BufferLog(n);          // Log buffer statistics
+	log.TrafficLog(n);         // Log traffic statistics
+	log.PowerLogEnd();         // Close power log file
+	log.ThroughputEnd();       // Close throughput log file
+	log.staticPowerLogEnd();   // Close static power log file
 	
-    // Show statistics
+    // Calculate and display global statistics
     NoximGlobalStats gs(n);
     gs.showStats( NoximGlobalParams::detailed);
+    // Check if volume-based stopping condition was met
     if ((NoximGlobalParams::max_volume_to_be_drained > 0) && getCurrentCycleNum() >= NoximGlobalParams::simulation_time ) {
 	cout << "\nWARNING! the number of flits specified with -volume option" << endl;
 	cout << "has not been reached."                                        << endl;

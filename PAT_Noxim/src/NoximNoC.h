@@ -24,12 +24,14 @@ using namespace std;
 
 extern ofstream results_log_pwr;
 
+// NoximNoC - Top-level SystemC module representing the entire Network-on-Chip
+// This module instantiates and connects all tiles (routers + processing elements) in a 3D mesh
 SC_MODULE(NoximNoC)
 {
 
     // I/O Ports
-    sc_in_clk clock;		// The input clock for the NoC
-    sc_in < bool > reset;	// The reset signal for the NoC
+    sc_in_clk clock;		// The input clock signal for the entire NoC
+    sc_in < bool > reset;	// The reset signal for the entire NoC
 
     // Signals
 	/****************MODIFY BY HUI-SHUN********************/
@@ -38,7 +40,9 @@ SC_MODULE(NoximNoC)
 
 	//////////////////////////////////////////////////////////////////////////////
 	//////////////////////////  added by Amin Norollah 
-	//taheri//تعریف سیگنال های شبکه برای کانال مجازی
+	// Network signals for virtual channels (VCs) - Request signals
+	// These signals connect tiles/routers together in the 3D mesh
+	// Format: req_to_[direction][x][y][z][vc] - request from tile at (x,y,z) going in [direction] using [vc]
 	sc_signal <bool> req_to_east                   [MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1][DEFAULT_NUM_VC];
     sc_signal <bool> req_to_west                   [MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1][DEFAULT_NUM_VC];
     sc_signal <bool> req_to_south                  [MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1][DEFAULT_NUM_VC];
@@ -182,19 +186,25 @@ SC_MODULE(NoximNoC)
         sc_signal<float>        buf7_to_down                 [MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1];
 
 	sc_signal< NoximNoP_data > vertical_free_slot  [MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1][MAX_STATIC_DIM + 1];
-	// Matrix of tiles
+	// Matrix of tiles - 3D array representing all tiles in the mesh
+	// Each tile contains a router and a processing element (PE)
     NoximTile  *t[MAX_STATIC_DIM][MAX_STATIC_DIM][MAX_STATIC_DIM];
+	// Vertical links connecting layers in the 3D stack (only need 2D array since links are per x,y position)
 	NoximVLink *v[MAX_STATIC_DIM][MAX_STATIC_DIM];
-    // Global tables
+    // Global routing table - contains routing information for table-based routing algorithms
     NoximGlobalRoutingTable grtable;
+    // Global traffic table - defines traffic patterns and destination distributions
     NoximGlobalTrafficTable gttable;
-    // Constructor
+    // Constructor - initializes the NoC structure
     SC_CTOR(NoximNoC) {
-		// Build the Mesh
+		// Build the 3D mesh by instantiating all tiles and connecting them
 		buildMesh();
 		//---------- Hot spot interface BY CMH <start>
 		//HS_initial();
+		// Initialize thermal interface for temperature calculations
 		HS_interface = new Thermal_IF(NoximGlobalParams::mesh_dim_x,NoximGlobalParams::mesh_dim_y, NoximGlobalParams::mesh_dim_z);
+		// Resize power and temperature trace vectors
+		// Size = 3 * total_tiles because we track 3 components per tile: router, memory, MAC unit
 		instPowerTrace   .resize(3*NoximGlobalParams::mesh_dim_x*NoximGlobalParams::mesh_dim_y*NoximGlobalParams::mesh_dim_z, 0);
 		overallPowerTrace.resize(3*NoximGlobalParams::mesh_dim_x*NoximGlobalParams::mesh_dim_y*NoximGlobalParams::mesh_dim_z, 0);
 		TemperatureTrace .resize(3*NoximGlobalParams::mesh_dim_x*NoximGlobalParams::mesh_dim_y*NoximGlobalParams::mesh_dim_z, 0);

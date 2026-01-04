@@ -16,6 +16,10 @@ The results of experiments conducted using PAT-Noxim demonstrate its effectivene
 
 PAT-Noxim is developed to support several predefined and custom architectures. it can be downloaded under GPL license terms.
 
+**Code Documentation and Comments:**
+
+PAT-Noxim distinguishes itself from other NoC simulators through its comprehensive in-code documentation. The source code contains extensive comments and explanations throughout all major components, making it significantly more accessible to developers and researchers. These comments provide detailed explanations of algorithms, data structures, signal connections, and implementation details that are typically absent in other simulators. This level of documentation facilitates understanding of the underlying mechanisms, enables easier modifications and extensions, and supports both educational and research purposes. Such comprehensive code documentation is a notable feature that enhances maintainability and usability compared to other available NoC simulation frameworks.
+
 **If you use PAT-Noxim in your research, we would appreciate the following citation in any publications to which it has contributed:**
 
 A. Norollah, D. Derafshi, H. Beitollahi and A. Patooghy, "PAT-Noxim: A Precise Power & Thermal Cycle-Accurate NoC Simulator," 2018 31st IEEE International System-on-Chip Conference (SOCC), Arlington, VA, USA, 2018, pp. 163-168. doi: [10.1109/SOCC.2018.8618491](https://doi.org/10.1109/SOCC.2018.8618491)
@@ -47,7 +51,8 @@ Change list for the latest version of PAT-Noxim:
 12.	Obtaining temperature feedback from tiles to calculate leakage current by TEI in a specific time interval.
 13.	Increasing the accuracy of power and thermal measurements in sub-90 nm manufacturing technologies.
 14.	Report the chip surface temperature once every 100,000 cycles.
-15.	Bug fixes 
+15.	Comprehensive code comments and documentation throughout the source code to facilitate understanding and modification
+16.	Bug fixes 
 
 How to Install
 ------------
@@ -90,6 +95,8 @@ To install the PAT-Noxim, you need to follow a few simple steps.
 ## Comprehensive Documentation
 
 **We have created extensive documentation to help both users and developers!**
+
+In addition to the detailed documentation files, PAT-Noxim features comprehensive inline code comments throughout the source code. Unlike many other NoC simulators that provide minimal or no code documentation, PAT-Noxim's source code contains extensive comments explaining data structures, algorithms, signal connections, and implementation details. This level of code documentation makes the simulator significantly more accessible to developers and researchers, enabling easier understanding, modification, and extension of the codebase.
 
 All documentation is located in the **`docs/`** folder with the following guides:
 

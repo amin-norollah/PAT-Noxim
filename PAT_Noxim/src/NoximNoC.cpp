@@ -32,44 +32,52 @@ extern ofstream results_log_pwr_router;
 extern ofstream results_log_pwr_mac;
 extern ofstream results_log_pwr_mem;
 
+// buildMesh - Constructs the 3D mesh Network-on-Chip
+// This function creates all tiles, routers, and connects them with signals
 void NoximNoC::buildMesh()
 {
 	cout<<"Start buildMesh..."<<endl;
-    // Check for routing table availability
+    // Load routing table if table-based routing is selected
     if (NoximGlobalParams::routing_algorithm == ROUTING_TABLE_BASED)
 	assert(grtable.load(NoximGlobalParams::routing_table_filename));
-    // Check for traffic table availability
+    // Load traffic table if table-based traffic distribution is selected
     if (NoximGlobalParams::traffic_distribution == TRAFFIC_TABLE_BASED)
 	assert(gttable.load(NoximGlobalParams::traffic_table_filename));
-    // Create the mesh as a matrix of tiles
+    // Create the mesh as a 3D matrix of tiles
 	int i,j,k;
-	char _name[20];
+	char _name[20];  // Buffer for generating unique tile names
+	// Loop through all positions in the 3D mesh
 	for ( i = 0; i < NoximGlobalParams::mesh_dim_x; i++) 
 	for ( j = 0; j < NoximGlobalParams::mesh_dim_y; j++){
+		// Create vertical links for each (x,y) position (connect layers in z-direction)
 		sprintf( _name, "VLink[%02d][%02d]", i, j);
 		v[i][j] = new NoximVLink( _name );
 		v[i][j]->clock(clock);
 		v[i][j]->reset(reset);
 		v[i][j]->setId( i + NoximGlobalParams::mesh_dim_x*j );
+		// Create tiles for each layer at this (x,y) position
 		for ( k = 0; k < NoximGlobalParams::mesh_dim_z; k++){
-			// Create the single Tile with a proper name
+			// Create a new tile with a unique name based on its position
 			sprintf(_name, "Tile[%02d][%02d][%02d]", i, j, k);
 			t[i][j][k] = new NoximTile(_name);
-			// Tell to the router its coordinates
+			// Configure the router with its ID, warm-up time, buffer depth, and routing table
 			t[i][j][k]->r->configure( xyz2Id( i , j , k ), NoximGlobalParams::stats_warm_up_time,
 					NoximGlobalParams::buffer_depth, grtable);
 			//cout<<" set NoC ..."<<endl;
-			// Tell to the PE its coordinates
+			// Configure the Processing Element (PE) with its local ID
 			t[i][j][k]->pe->local_id       = xyz2Id( i , j , k );
+			// Set traffic table for PE to determine packet destinations
 			t[i][j][k]->pe->traffic_table  = &gttable;	// Needed to choose destination
+			// Mark PE as non-transmitting if it never appears as a source in traffic table
 			t[i][j][k]->pe->never_transmit = (gttable.occurrencesAsSource(t[i][j][k]->pe->local_id) == 0);
 			//cout<<"get set NoC ..."<<endl;
-			// Map clock and reset
+			// Connect clock and reset signals to the tile
 			t[i][j][k]->clock(clock);
 			t[i][j][k]->reset(reset);
 			
 			////////////////////////////////////////////////////////////////////////////////////////////////
-			//////////////////////////  Map Rx signals  
+			//////////////////////////  Map Rx (Receive) signals - Connect input channels between tiles
+			// Each direction has virtual channels, so we need to connect req/ack for each VC
 			for (int VC_num = 0; VC_num < DEFAULT_NUM_VC; VC_num++){
 				t[i][j][k]->req_rx	             [DIRECTION_NORTH][VC_num](req_to_south       [i  ][j  ][k  ][VC_num]);
 				t[i][j][k]->ack_rx	             [DIRECTION_NORTH][VC_num](ack_to_north       [i  ][j  ][k  ][VC_num]);
@@ -613,50 +621,59 @@ void NoximNoC::buildMesh()
 	//cout<<col_max<<" "<<col_min<<" "<<row_max<<" "<<row_min;
 }
 
-void NoximNoC::entry(){  //Foster big modified - 09/11/12
-	//reset power
+// entry - Main SystemC method called every clock cycle
+// Handles thermal management, power logging, and emergency mode decisions
+// Foster big modified - 09/11/12
+void NoximNoC::entry(){
+	// Reset phase: Initialize all power and temperature values
 	if (reset.read()) {
-		//in reset phase, reset power value 
+		// In reset phase, reset power values for all tiles
 		for(int k=0; k < NoximGlobalParams::mesh_dim_z; k++)
 		for(int j=0; j < NoximGlobalParams::mesh_dim_y; j++)	
 		for(int i=0; i < NoximGlobalParams::mesh_dim_x; i++){
+			// Reset steady-state power counters
 			t[i][j][k]->r->stats.power.resetPwr();
+			// Reset transient power counters (power consumed in current period)
 			t[i][j][k]->r->stats.power.resetTransientPwr();
 			//t[i][j][k]->r->stats.power.resetPwr();
 			//t[i][j][k]->r->stats.power.resetTransientPwr();
 			//t[i][j][k]->r->stats.temperature = INIT_TEMP - 273.15;
+			// Initialize predicted temperature to initial temperature (in Celsius)
 			t[i][j][k]->r->stats.pre_temperature1 = INIT_TEMP - 273.15;
-			MTTT[i][j][k] = 10;
-			traffic[i][j][k] = 0;
+			MTTT[i][j][k] = 10;        // Initialize Maximum Time To Threshold
+			traffic[i][j][k] = 0;      // Initialize traffic counter
 		}
-		_emergency = false;
-		_clean     = true;
+		_emergency = false;  // No emergency mode initially
+		_clean     = true;   // System is in clean state initially
 	/*	if(!mkdir("results/Traffic",0777)) cout<<"Making new directory results/Hist"<<endl;
                 string filename;
                 filename = "results/Traffic/Traffic_analysis";
                 filename = MarkFileName( filename );
 	*/}
 	else{
+		// Normal operation phase (not in reset)
 		int CurrentCycle    = getCurrentCycleNum();
 		int CurrentCycleMod = (getCurrentCycleNum() % (int) (TEMP_REPORT_PERIOD));
+		// Enter clean stage before temperature calculation to drain network
 		if(  CurrentCycleMod == ((int) (TEMP_REPORT_PERIOD) - NoximGlobalParams::clean_stage_time)){
 			if (NoximGlobalParams::verbose_mode > VERBOSE_LOW)
 				cout<<"% Set Clean Stage %"<<endl;
-            TransientLog(); //taheri
-			setCleanStage(); 
+            TransientLog(); //taheri - log transient statistics
+			setCleanStage(); // Stop new packet injection to drain network
 			num_pkt = 7168800;
 		}
 
-		//for progressBar
+		// Display progress bar indicator
 		if (CurrentCycle % (int)(NoximGlobalParams::simulation_time / 60) == 0) cout << "#"<<flush;
 
+		// At the start of each temperature reporting period
 		if( CurrentCycleMod == 0 ){
-			EndCleanStage();
+			EndCleanStage();  // End clean stage, resume normal operation
 			
-			//accumulate steady power after warm-up time
+			// Accumulate steady-state power after warm-up time
 			if( CurrentCycle > (int)( NoximGlobalParams::stats_warm_up_time ) )
 				steadyPwr2PtraceFile();
-			//Calculate Temperature
+			// Calculate temperature using thermal model if enabled
 			if( NoximGlobalParams::cal_temp ){
 				transPwr2PtraceFile();
 				HS_interface->Temperature_calc(instPowerTrace, TemperatureTrace);

@@ -17,56 +17,63 @@
 #include "NoximStats.h"
 
 /////////////////////////////
-//////    rxProcess	   //////
+//////    rxProcess - Receive Process //////
+// This process handles incoming flits from all input ports and virtual channels
+// It validates incoming requests, checks buffer availability, and stores flits
 //...........................
 void NoximRouter::rxProcess() {
 	if (NoximGlobalParams::verbose_mode > VERBOSE_LOW)
 		cout << "Router[" << local_id << "]-Rx" << endl;
-	if (reset.read()) { // RESET
-		// Clear outputs and indexes of receiving protocol
+	if (reset.read()) { // RESET PHASE
+		// Reset phase: Initialize all buffers, counters, and state variables
 		for (int i = 0; i < DIRECTIONS + 2; i++)
 			for (int vc = 0; vc < NoximGlobalParams::num_vcs; vc++) {
-				routed_flits[i][vc] = 0;
-				buffer[i][vc].Clean();
-				id_recieve[i][vc] = -1;
+				routed_flits[i][vc] = 0;         // Reset flit counter for each input/VC
+				buffer[i][vc].Clean();           // Clear all buffers
+				id_recieve[i][vc] = -1;          // Reset test ID tracking
 			}
-		reservation_table.clear();
-		local_drained = 0;
-		routed_DWflits = 0;
-		routed_packets = 0;
+		reservation_table.clear();                // Clear switch reservation table
+		local_drained = 0;                       // Reset local drain counter
+		routed_DWflits = 0;                      // Reset Data Width (DW) flit counter
+		routed_packets = 0;                      // Reset packet counter
 	}
 	else {
-		// For each channel decide if a new flit can be accepted
-		// This process simply sees a flow of incoming flits. All arbitration
-		// and wormhole related issues are addressed in the txProcess()
+		// NORMAL OPERATION: Process incoming flits from all input ports and VCs
+		// This process implements the receive side of the handshake protocol
+		// All arbitration and routing decisions happen in txProcess()
 		for (int i = 0; i < DIRECTIONS + 2; i++)
-			// To accept a new flit, the following conditions must match:
-			// 1) there is an incoming request
-			// 2) there is a free slot in the input buffer of direction i
+			// Flit acceptance conditions:
+			// 1) Neighbor is requesting to send (req_rx == 1)
+			// 2) Router is not in emergency/throttled mode
+			// 3) Input buffer has free space for this VC
 			for (int vc = 0; vc < NoximGlobalParams::num_vcs; vc++) {
 			if (req_rx[i][vc].read() == 1) {
-				if (!_emergency && !buffer[i][vc].IsFull()) {//check throttling 
-					NoximFlit received_flit = flit_rx[i].read();
+				if (!_emergency && !buffer[i][vc].IsFull()) {  // Check throttling and buffer space
+					NoximFlit received_flit = flit_rx[i].read();  // Read the incoming flit
 					if (NoximGlobalParams::verbose_mode > VERBOSE_OFF) {
 						cout << getCurrentCycleNum() << ": Router[" << local_id << "], Input[" << i
 							<< "], Received flit: " << received_flit << endl;
 					}
+					// Record when flit entered this router (for delay calculation)
 					received_flit.waiting_cnt = getCurrentCycleNum();
-					// Store the incoming flit in the circular buffer
+					// Store the incoming flit in the circular buffer for this input port and VC
 					buffer[i][vc].Push(received_flit);
-					routed_flits[i][vc]++;
+					routed_flits[i][vc]++;  // Increment flit counter for statistics
 
+					// Track Data Width (DW) flits separately (flits using adaptive/downward routing)
 					if (received_flit.routing_f != ROUTING_WEST_FIRST)
 						routed_DWflits++;
 				
-					if (received_flit.flit_type == FLIT_TYPE_HEAD) //{
+					// Count packets (only HEAD flits represent new packets)
+					if (received_flit.flit_type == FLIT_TYPE_HEAD)
 						routed_packets++;
-						//received_flit.vc = vc;
-						//id_recieve[i][vc] = received_flit.test_id;
+					//received_flit.vc = vc;
+					//id_recieve[i][vc] = received_flit.test_id;
 					//}
-					// Incoming flit
+					// Update power consumption: lateral (horizontal) links consume power
+					// Vertical links (UP/DOWN) have different power characteristics
 					if (i != DIRECTION_UP && i != DIRECTION_DOWN)
-						stats.power.RouterRxLateral();
+						stats.power.RouterRxLateral();  // Account for lateral link receive power
 				}
 			}
 		}
@@ -80,28 +87,31 @@ void NoximRouter::rxProcess() {
 
 
 /////////////////////////////
-//////    TxProcess	   //////
+//////    txProcess - Transmit Process //////
+// Main router pipeline logic: RC -> VA -> SA -> ST (Routing -> VC Allocation -> Switch Allocation -> Switch Traversal)
+// This process handles all routing decisions, arbitration, and flit forwarding
 //...........................
 void NoximRouter::txProcess() {
 	if (NoximGlobalParams::verbose_mode > VERBOSE_LOW)
 		cout << "Router[" << local_id << "]-Tx" << endl;
-	if (reset.read()) { // RESET
-		// Clear outputs and indexes of transmitting protocol
+	if (reset.read()) { // RESET PHASE
+		// Reset phase: Initialize all output signals, VC states, and pipeline registers
 		for (int i = 0; i < DIRECTIONS + 2; i++) {// 0~6 DIRECTIONS + 2 = 8
 			for (int vc = 0; vc < NoximGlobalParams::num_vcs; vc++) {
-				ack_rx[i][vc].write(0);
-				req_tx[i][vc].write(0);
-				waiting[i][vc] = 0;
-				vc_state.global_state(i, vc, G_IDLE);
-				vc_state.routing(i, vc, NOT_VALID);
-				vc_state.o(i, vc, NOT_VALID);
-				baseline_wait[i][vc] = 0;
-				pre_routing[i][vc] = -1;
-				speculation_sa_enale[i][vc] = true;
+				ack_rx[i][vc].write(0);                           // Clear acknowledge signals
+				req_tx[i][vc].write(0);                           // Clear transmit request signals
+				waiting[i][vc] = 0;                               // Reset waiting time counter
+				vc_state.global_state(i, vc, G_IDLE);             // Set VC state to IDLE
+				vc_state.routing(i, vc, NOT_VALID);               // Clear routing output
+				vc_state.o(i, vc, NOT_VALID);                     // Clear output VC assignment
+				baseline_wait[i][vc] = 0;                         // Reset baseline pipeline wait counter
+				pre_routing[i][vc] = -1;                          // Clear pre-routing computation
+				speculation_sa_enale[i][vc] = true;               // Enable speculative switch allocation
+				// Initialize credit counters based on credit-based flow control mode
 				if(NoximGlobalParams::arch_with_credit == 1)
-					vc_state.credit(i, vc, NoximGlobalParams::buffer_depth, SET_MODE);
+					vc_state.credit(i, vc, NoximGlobalParams::buffer_depth, SET_MODE);  // Full credit = buffer depth
 				else if (NoximGlobalParams::arch_with_credit == 0)
-					vc_state.credit(i, vc, 1, SET_MODE);
+					vc_state.credit(i, vc, 1, SET_MODE);                                // Single credit mode
 
 			}
 			change_vc_baseline[i] = true;
@@ -125,19 +135,26 @@ void NoximRouter::txProcess() {
 	else {
 
 		//////////////////////////////
-		//////    Check Global state 
+		//////    Check Global VC State - State Machine Transitions
+		// VC states: IDLE -> ROUTING -> VCALLOCATING -> ACTIVE -> (back to IDLE on TAIL)
 		//............................
 		for (int input = 0; input < DIRECTIONS + 2; input++)
 			for (int vc = 0; vc < NoximGlobalParams::num_vcs; vc++) {
-				if (vc_state.getOut(input, vc, G_VCS) == G_VCALLOCATING && vc_state.getOut(input, vc, O_VCS) != NOT_VALID) vc_state.global_state(input, vc, G_ACTIVE);
-				if (vc_state.getOut(input, vc, G_VCS) == G_ROUTING) vc_state.global_state(input, vc, G_VCALLOCATING);
+				// Transition: VCALLOCATING -> ACTIVE (VC allocated, ready to transmit)
+				if (vc_state.getOut(input, vc, G_VCS) == G_VCALLOCATING && vc_state.getOut(input, vc, O_VCS) != NOT_VALID) 
+					vc_state.global_state(input, vc, G_ACTIVE);
+				// Transition: ROUTING -> VCALLOCATING (routing done, proceed to VC allocation)
+				if (vc_state.getOut(input, vc, G_VCS) == G_ROUTING) 
+					vc_state.global_state(input, vc, G_VCALLOCATING);
 			}
 		//////////////////////////////
-		//////    Credit and manage baseline mode 
+		//////    Credit Management and Baseline Router Mode
 		//............................
-		if (NoximGlobalParams::arch_router == 0) { ///// choose vc in baseline mode
+		// Baseline router mode: simpler VC selection without full pipeline support
+		if (NoximGlobalParams::arch_router == 0) { // Baseline router mode
 			for (int i = 0; i < DIRECTIONS + 2; i++) {
 				if (change_vc_baseline[i]) {
+					// Round-robin VC selection: find next non-empty VC for this input
 					int count = 0, vc = (start_from_port_baseline) % NoximGlobalParams::num_vcs;
 					while (buffer[i][vc].IsEmpty() && count < NoximGlobalParams::num_vcs) {
 						start_from_port_baseline++;
@@ -145,66 +162,76 @@ void NoximRouter::txProcess() {
 						count++;
 					}
 					if (!buffer[i][vc].IsEmpty()) {
-						choose_vc_in_baseline[i] = vc;
-						change_vc_baseline[i] = false;
+						choose_vc_in_baseline[i] = vc;  // Select this VC
+						change_vc_baseline[i] = false;  // VC selected, don't change until needed
 					}
-					else choose_vc_in_baseline[i] = NOT_RESERVED;
+					else choose_vc_in_baseline[i] = NOT_RESERVED;  // No VC available
 				}
+				// Decrement baseline pipeline wait counter
 				if (baseline_wait[i][choose_vc_in_baseline[i]] > 0)
 					delay_baseline(i, choose_vc_in_baseline[i], MINUS_MODE);
 			}
-			start_from_port_baseline++;
+			start_from_port_baseline++;  // Advance round-robin pointer
 		}
-		//credits
+		// Credit-based flow control: update credits when downstream router acknowledges receipt
 		for (int o = 0; o < DIRECTIONS + 2; o++) {
 			for (int vc_out = 0; vc_out < NoximGlobalParams::num_vcs; vc_out++) {
-				req_tx[o][vc_out].write(0);
-				ack_rx[o][vc_out].write(0);
+				req_tx[o][vc_out].write(0);      // Clear transmit requests (will be set if flit transmitted)
+				ack_rx[o][vc_out].write(0);      // Clear receive acknowledgments
+				// Credit update: when downstream router acknowledges, increment available credits
 				if (ack_tx[o][vc_out].read() == 1)
-					vc_state.credit(o, vc_out, NOT_VALID, PLUS_MODE);
+					vc_state.credit(o, vc_out, NOT_VALID, PLUS_MODE);  // Increase credit count
 			}
-			can_step_2_speculation[o] = false;
+			can_step_2_speculation[o] = false;  // Reset speculative SA flag
 		}
 		//////////////////////////////
-		//////     Switch Traversal 
+		//////     Switch Traversal (ST) Stage - Flit Transmission
 		//............................
+		// This stage transmits flits that won in previous SA stage through the crossbar
 		for (int output = 0; output < DIRECTIONS + 2; output++) {
-			int input = win_port[output];	// load input channel 
-			int vc_in = win_vc  [output];	// load vc input channel
+			int input = win_port[output];	// Get winning input port from Switch Allocation
+			int vc_in = win_vc  [output];	// Get winning VC from Switch Allocation
+			// Check if this output port has a valid winner from SA stage
 			if (input != NOT_RESERVED && vc_in != NOT_RESERVED) {
+				// Validate flit can be transmitted: buffer not empty, not in emergency, VC in ACTIVE state
 				if (!buffer[input][vc_in].IsEmpty() && !_emergency && vc_state.getOut(input, vc_in, G_VCS) == G_ACTIVE) {
-					NoximFlit flit = buffer[input][vc_in].Front();
-					int vc_out = vc_state.getOut(input, vc_in, O_VCS);
+					NoximFlit flit = buffer[input][vc_in].Front();  // Get flit from front of buffer
+					int vc_out = vc_state.getOut(input, vc_in, O_VCS);  // Get allocated output VC
 					//verbose
 					if (NoximGlobalParams::verbose_mode > VERBOSE_OFF) {
 						cout << getCurrentCycleNum() << ": Router[" << local_id << "], Input[" << input <<
 							"] forward to Output[" << output << "], flit: " << flit << endl;
 					}
+					// Check if router speed throttling allows transmission (DFS: Data Forwarding Speed)
 					if ((getCurrentCycleNum() % DFS) < (8 - RST)) {
-						if (flit.flit_type == FLIT_TYPE_HEAD) { //for routing computation in next router
-							flit.east = east[input][vc_in];
-							flit.south = south[input][vc_in];
-							flit.vc = vc_out;
-							flit.pre_routing = pre_routing[input][vc_in];
+						if (flit.flit_type == FLIT_TYPE_HEAD) { // Update routing hints for next router (look-ahead routing)
+							flit.east = east[input][vc_in];        // Pre-computed east direction hint
+							flit.south = south[input][vc_in];      // Pre-computed south direction hint
+							flit.vc = vc_out;                      // Assign output VC to flit
+							flit.pre_routing = pre_routing[input][vc_in];  // Pre-computed routing for next router
 						}
+						// Transmit flit through crossbar to output port
 						flit_tx[output].write(flit);
+						// Assert request signal to downstream router
 						req_tx[output][vc_out].write(!buffer[input][vc_in].IsEmpty());
-						buffer[input][vc_in].Pop();
-						waiting[input][vc_in] = 0;
-						vc_state.credit(output, vc_out, NOT_VALID, MINUS_MODE);
-						ack_rx[input][vc_in].write(!_emergency);
+						buffer[input][vc_in].Pop();                // Remove flit from input buffer
+						waiting[input][vc_in] = 0;                 // Reset waiting counter
+						vc_state.credit(output, vc_out, NOT_VALID, MINUS_MODE);  // Decrement credit (flit sent)
+						ack_rx[input][vc_in].write(!_emergency);  // Acknowledge upstream router (unless in emergency)
 
-						if (flit.flit_type != FLIT_TYPE_TAIL && NoximGlobalParams::arch_router == 0) {//if baseline architecture
-							baseline_wait[input][vc_in] = 4;		//for 5 stage
+						// Baseline architecture: set pipeline wait cycles based on architecture (3/4/5 stage)
+						if (flit.flit_type != FLIT_TYPE_TAIL && NoximGlobalParams::arch_router == 0) {
+							baseline_wait[input][vc_in] = 4;		// Default: 5-stage pipeline (wait 4 cycles)
 							if (NoximGlobalParams::arch_rc == 1 || NoximGlobalParams::arch_sa == 1)
-								baseline_wait[input][vc_in]--;		//for 4 stage
+								baseline_wait[input][vc_in]--;		// 4-stage: RC or SA pipelined (wait 3 cycles)
 							if (NoximGlobalParams::arch_rc == 1 && NoximGlobalParams::arch_sa == 1)
-								baseline_wait[input][vc_in]--;		//for 3 stage
-							change_vc_baseline[input] = true;
+								baseline_wait[input][vc_in]--;		// 3-stage: both RC and SA pipelined (wait 2 cycles)
+							change_vc_baseline[input] = true;      // Need to reselect VC after wait period
 						}
 
+						// Update power consumption: lateral (horizontal) crossbar and link power
 						if (output != DIRECTION_UP && output != DIRECTION_DOWN)
-							stats.power.Router2Lateral(); // Crossbar() + Links()
+							stats.power.Router2Lateral(); // Account for crossbar traversal + lateral link transmission
 
 						_total_waiting += getCurrentCycleNum() - flit.waiting_cnt;
 
@@ -212,25 +239,28 @@ void NoximRouter::txProcess() {
 							if (((getCurrentCycleNum() - flit.waiting_cnt) < 200) && (getCurrentCycleNum() > 400000))
 								wait_cnt[(getCurrentCycleNum() - flit.waiting_cnt)]++;
 
-						// Update stats
+						// Update statistics and handle flit reception
 						if (output == DIRECTION_LOCAL) {
+							// Flit reached local processing element - update receive statistics
 							stats.receivedFlit(getCurrentCycleNum(), flit);
-							stats.power.Router2Local();
+							stats.power.Router2Local();  // Account for local port power
+							// Volume-based simulation stopping: stop when specified number of flits drained
 							if (NoximGlobalParams::max_volume_to_be_drained) {
 								if (drained_volume >= NoximGlobalParams::max_volume_to_be_drained)
-									sc_stop();
+									sc_stop();  // Stop simulation when target volume reached
 								else {
-									drained_volume++;
-									local_drained++;
+									drained_volume++;      // Increment global counter
+									local_drained++;       // Increment local counter
 								}
 							}
 						}
+						// Tail flit processing: release reserved resources
 						if (flit.flit_type == FLIT_TYPE_TAIL) {
-							reservation_table.release(output, vc_out);
-							vc_state.global_state(input, vc_in, G_IDLE);
-							vc_state.routing(input, vc_in, NOT_VALID);
-							vc_state.o(input, vc_in, NOT_VALID);
-							speculation_sa_enale[input][vc_in] = true; // allow to speculation in next VA/SA if "speculation SA" is on!
+							reservation_table.release(output, vc_out);  // Release switch reservation
+							vc_state.global_state(input, vc_in, G_IDLE);  // Return VC to IDLE state
+							vc_state.routing(input, vc_in, NOT_VALID);    // Clear routing output
+							vc_state.o(input, vc_in, NOT_VALID);          // Clear output VC assignment
+							speculation_sa_enale[input][vc_in] = true;    // Re-enable speculative SA for next packet
 						}
 					}
 				}//output port reserve,
@@ -256,38 +286,46 @@ void NoximRouter::txProcess() {
 				can_step2[i][j] = false;
 		}
 		//////////////////////////////
-		//////    Routing Computation
+		//////    Routing Computation (RC) Stage
 		//............................
+		// RC stage: compute output port direction for HEAD flits
+		// Each input port has one RC unit, so only one VC per input can use RC per cycle
 		for (int i = 0; i < DIRECTIONS + 2; i++)
-			RC_ACTION[i] = true;	//one RC per input
+			RC_ACTION[i] = true;	// Mark RC unit as available for each input port
+		// Round-robin scheduling across input ports
 		for (int j = 0; j < DIRECTIONS + 2; j++) {
-			int i = (start_from_port + j) % (DIRECTIONS + 2);
+			int i = (start_from_port + j) % (DIRECTIONS + 2);  // Round-robin port selection
 			for (int vc = 0; vc < NoximGlobalParams::num_vcs; vc++) {
-				if (vc_state.getOut(i, vc, G_VCS) == G_IDLE && (choose_vc_in_baseline[i] == vc && baseline_wait[i][vc]<=0 || NoximGlobalParams::arch_router == 1)) {
+				// RC conditions: VC in IDLE state, and either baseline VC selected or pipelined router
+				if (vc_state.getOut(i, vc, G_VCS) == G_IDLE && 
+				    (choose_vc_in_baseline[i] == vc && baseline_wait[i][vc]<=0 || NoximGlobalParams::arch_router == 1)) {
 					if (!buffer[i][vc].IsEmpty() && RC_ACTION[i] == true) {
-						NoximFlit flit = buffer[i][vc].Front();
+						NoximFlit flit = buffer[i][vc].Front();  // Get HEAD flit from buffer
 						/////////////// buffer power
-						stats.power.input_buffer_read();
+						stats.power.input_buffer_read();  // Account for buffer read power
 						/////////////// end power
 						//verbose
-						if (flit.flit_type == FLIT_TYPE_BODY && NoximGlobalParams::verbose_mode > VERBOSE_LOW) { // missRoute
+						// Debugging: BODY flits should not need routing (should follow HEAD flit path)
+						if (flit.flit_type == FLIT_TYPE_BODY && NoximGlobalParams::verbose_mode > VERBOSE_LOW) { 
 							cout << "** MISS ROUTE **" << endl;
 							cout << "		* Router[" << local_id << "], Input[" << i << "], VC[" << vc << "]" << endl;
 							cout << "		* Flit: "  << flit << endl << endl;
 						}
 						if (flit.flit_type == FLIT_TYPE_HEAD) {
+							// Perform routing computation (unless RC is pipelined and routing already done)
 							if (!NoximGlobalParams::arch_rc || i >= DIRECTION_LOCAL) {
-								vc_state.global_state(i, vc, G_ROUTING);
+								vc_state.global_state(i, vc, G_ROUTING);  // Set VC state to ROUTING
 								//start_from_port++;
-								// prepare data for routing
+								// Prepare routing data structure with all necessary information
 								NoximRouteData route_data;
-								route_data.current_id = local_id;
+								route_data.current_id = local_id;                    // Current router ID
+								// Handle multi-path routing: if arrived at intermediate node, route to final destination
 								route_data.src_id = (flit.arr_mid) ? flit.mid_id : flit.src_id;
 								route_data.dst_id = (flit.arr_mid) ? flit.dst_id : flit.mid_id;
-								route_data.dir_in = i;
-								route_data.routing = flit.routing_f;
-								route_data.DW_layer = flit.DW_layer;
-								route_data.arr_mid = flit.arr_mid;
+								route_data.dir_in = i;                              // Input direction
+								route_data.routing = flit.routing_f;                // Routing algorithm to use
+								route_data.DW_layer = flit.DW_layer;                // Data width layer for 3D routing
+								route_data.arr_mid = flit.arr_mid;                  // Flag: has packet reached intermediate node
 								if (flit.routing_f < 0) {
 									cout << getCurrentCycleNum() << ":" << flit << endl;
 									cout << "flit.current_id" << "=" << local_id << id2Coord(route_data.current_id) << endl;
@@ -302,14 +340,16 @@ void NoximRouter::txProcess() {
 								}
 								if (NoximGlobalParams::verbose_mode > VERBOSE_LOW)
 									cout << "Before route:" << flit;
+								// Perform routing computation: returns output port direction
 								int output_routing = route(route_data, &flit.south, &flit.east, &flit.vc);
-								vc_state.routing(i, vc, output_routing); //store in VC State table
-								RC_ACTION[i] = false;				     //in each cycle, just one vc can use RC because each input have one RC Unit. 
-								vc_state.id(i, vc, flit.test_id);
+								vc_state.routing(i, vc, output_routing);  // Store routing result in VC state
+								RC_ACTION[i] = false;                     // RC unit busy - only one VC per input per cycle
+								vc_state.id(i, vc, flit.test_id);         // Store test ID for debugging
 							}
 							else {
+								// Pipelined RC: routing already computed, skip to VC allocation
 								vc_state.global_state(i, vc, G_VCALLOCATING);
-								vc_state.routing(i, vc, flit.pre_routing);
+								vc_state.routing(i, vc, flit.pre_routing);  // Use pre-computed routing result
 								if (NoximGlobalParams::verbose_mode > VERBOSE_MEDIUM)
 									cout << " Pre_route:" << flit;
 							}
@@ -320,25 +360,31 @@ void NoximRouter::txProcess() {
 			}
 		}
 		////////////////////////////////////////////////
-		//////    Virtual Channel Allocating
+		//////    Virtual Channel Allocation (VA) Stage
 		//..............................................
+		// VA stage: allocate output VC for each HEAD flit that completed routing
+		// Uses round-robin arbitration to ensure fairness
 		for (int j = 0; j < DIRECTIONS + 2; j++) {
-			int i = (start_from_port + j) % (DIRECTIONS + 2); // RoundRobin Arbiter
+			int i = (start_from_port + j) % (DIRECTIONS + 2); // RoundRobin Arbiter across input ports
 			for (int vc = 0; vc < NoximGlobalParams::num_vcs; vc++)
-				if (vc_state.getOut(i, vc, G_VCS) == G_VCALLOCATING && (choose_vc_in_baseline[i] == vc  && baseline_wait[i][vc] <= 0 || NoximGlobalParams::arch_router == 1)) {
+				// VA conditions: VC in VCALLOCATING state, and eligible for VA
+				if (vc_state.getOut(i, vc, G_VCS) == G_VCALLOCATING && 
+				    (choose_vc_in_baseline[i] == vc && baseline_wait[i][vc] <= 0 || NoximGlobalParams::arch_router == 1)) {
 					if (!buffer[i][vc].IsEmpty()) {
 						NoximFlit flit = buffer[i][vc].Front();
 						/////////////// buffer power
-						stats.power.input_buffer_read();
+						stats.power.input_buffer_read();  // Account for buffer read power
 						/////////////// end power
 						if (flit.flit_type == FLIT_TYPE_HEAD) {
-							int output_port = vc_state.getOut(i, vc, R_VCS);	// load RC output
+							int output_port = vc_state.getOut(i, vc, R_VCS);	// Get routing output port from RC stage
 							/////////////////////////////
-							//////// Pre Routing
+							//////// Pre Routing - Look-ahead Routing Computation
+							// Compute routing for the next router while current router does VA/SA
+							// This enables pipelined routing and reduces latency
 							if (NoximGlobalParams::arch_rc && output_port < DIRECTION_LOCAL) {
-								int next_router = NOT_VALID;
-								int dir_in;
-								NoximRouteData route_data;
+								int next_router = NOT_VALID;  // ID of next router in path
+								int dir_in;                   // Input direction at next router
+								NoximRouteData route_data;    // Routing data for next router
 								switch (output_port) {
 								case 0: next_router = local_id - NoximGlobalParams::mesh_dim_x; dir_in = 2; break;
 								case 1: next_router = local_id + 1; dir_in = 3; break;
@@ -372,10 +418,14 @@ void NoximRouter::txProcess() {
 							}
 							//////// End Pre Routing	
 							/////////////////////////////
-							if (reservation_table.isAvailable(output_port, flit.vc) && (getCurrentCycleNum() % DFS) < (8 - RST))// && packet_num[i] > 0
+							// Check if output port and VC are available for reservation
+							if (reservation_table.isAvailable(output_port, flit.vc) && (getCurrentCycleNum() % DFS) < (8 - RST))
 							{
-								reservation_table.reserve(i, vc, output_port, flit.vc); south[i][vc] = flit.south; east[i][vc] = flit.east;
-								vc_state.o(i, vc, flit.vc);
+								// Reserve output port and VC in reservation table (prevents conflicts)
+								reservation_table.reserve(i, vc, output_port, flit.vc); 
+								south[i][vc] = flit.south;  // Store routing hints for later use
+								east[i][vc] = flit.east;
+								vc_state.o(i, vc, flit.vc);  // Store allocated output VC in VC state
 								if (NoximGlobalParams::verbose_mode > VERBOSE_OFF) {
 									cout << getCurrentCycleNum() << ": Router[" << local_id << "], Input[" << i << "], VC[" << vc << "] (" << buffer[i][vc].Size() << " flits)" << ", reserved Output[" << output_port << "], flit: " << flit << endl;
 								}
@@ -465,75 +515,96 @@ void NoximRouter::txProcess() {
 ////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////
 
+// delay_baseline - Manages pipeline wait cycles for baseline router architectures
+// Baseline routers have different pipeline depths (3, 4, or 5 stages)
+// This function sets or decrements the wait counter accordingly
 void NoximRouter::delay_baseline(int input, int vc_in, int mode) {
 	if (SET_MODE) {
-		baseline_wait[input][vc_in] = 4;		//for 5 stage
+		// Initialize wait counter based on pipeline depth
+		baseline_wait[input][vc_in] = 4;		// Default: 5-stage pipeline (wait 4 cycles)
 		if (NoximGlobalParams::arch_rc == 1 || NoximGlobalParams::arch_sa == 1)
-			baseline_wait[input][vc_in]--;		//for 4 stage
+			baseline_wait[input][vc_in]--;		// 4-stage: RC or SA pipelined (wait 3 cycles)
 		if (NoximGlobalParams::arch_rc == 1 && NoximGlobalParams::arch_sa == 1)
-			baseline_wait[input][vc_in]--;		//for 3 stage
+			baseline_wait[input][vc_in]--;		// 3-stage: both RC and SA pipelined (wait 2 cycles)
 	}
 	else if (MINUS_MODE)
-		baseline_wait[input][vc_in]--;
+		baseline_wait[input][vc_in]--;  // Decrement wait counter (called each cycle)
 }
 
 
+// Detour - Alternative routing function when primary path is congested or throttled
+// Uses fully adaptive routing but filters out throttled directions
 int NoximRouter::Detour(const NoximRouteData & route_data, int input, int waiting)
 {//	assert(false);
 
+	// Handle special cases: destination reached
 	if (route_data.dst_id == local_id && route_data.arr_mid)
-		return DIRECTION_LOCAL;
+		return DIRECTION_LOCAL;  // Final destination reached, deliver to local PE
 	else if ((route_data.dst_id == local_id && !route_data.arr_mid))
-		return DIRECTION_SEMI_LOCAL;
+		return DIRECTION_SEMI_LOCAL;  // Intermediate destination reached, continue routing
 
+	// Get coordinates for routing computation
 	NoximCoord position = id2Coord(route_data.current_id);
 	NoximCoord src_coord = id2Coord(route_data.src_id);
 	NoximCoord dst_coord = id2Coord(route_data.dst_id);
 
+	// Use fully adaptive routing to get all candidate directions
 	vector < int > candidate_channels = routingFullyAdaptive(position, dst_coord);
 	//cout<<candidate_channels.size()<<endl;
+	// Filter out throttled lateral directions (cannot route through throttled neighbors)
 	for (int i = candidate_channels.size() - 1; i >= 0; i--) {
-		if (candidate_channels[i] < 4) //for lateral direction
-			if (on_off_neighbor[candidate_channels[i]].read() == 1) {//if the direction is throttled
-				candidate_channels.erase(candidate_channels.begin() + i);//then erase that way 
+		if (candidate_channels[i] < 4) // Only check lateral directions (not UP/DOWN)
+			if (on_off_neighbor[candidate_channels[i]].read() == 1) {  // If direction is throttled
+				candidate_channels.erase(candidate_channels.begin() + i);  // Remove throttled direction
 			}
 	}
 	//cout<<candidate_channels.size()<<endl;
+	// Select randomly from remaining candidate directions
 	return selectionRandom(candidate_channels);
 }
 
 
+// getCurrentNoPData - Builds Neighbor-on-Path (NoP) data structure
+// NoP data contains congestion information about neighboring routers
+// Used by adaptive routing algorithms to make informed routing decisions
 NoximNoP_data NoximRouter::getCurrentNoPData() const
 {
 	NoximNoP_data NoP_data;
 	bool x = false;
+	// Collect buffer status and availability for each neighboring direction
 	for (int j = 0; j < DIRECTIONS; j++) {
+		// Get free slots from neighbor (received via free_slots_neighbor signal)
 		NoP_data.channel_status_neighbor[j].free_slots = free_slots_neighbor[j].read();
 
+		// Check if any VC is available on this output port
 		for (int vc = 0; vc < NoximGlobalParams::num_vcs; vc++)
 			if (reservation_table.isAvailable(j, vc) != 0) {
-				x = true;			//nead test
+				x = true;			// Port has available VCs
 				break;
 			}
 
-		NoP_data.channel_status_neighbor[j].available = x;
+		NoP_data.channel_status_neighbor[j].available = x;  // Set availability flag
+		x = false;  // Reset for next direction
 	}
 
-	NoP_data.sender_id = local_id;
+	NoP_data.sender_id = local_id;  // Identify this router as sender
 
 	return NoP_data;
 }
 
+// bufferMonitor - Monitors buffer status and sends information to neighbors
+// This function runs every cycle to update free slot information for adaptive routing
 void NoximRouter::bufferMonitor()
 {
 	int i;
 	if (reset.read()) {
+		// Reset phase: Initialize free slots to maximum buffer size
 		for (i = 0; i < DIRECTIONS + 1; i++)
-			free_slots[i].write(buffer[i][0].GetMaxBufferSize());
+			free_slots[i].write(buffer[i][0].GetMaxBufferSize());  // All buffers empty initially
 		for (int i = 0; i<4; i++)
-			free_slots_PE[i].write(free_slots_neighbor[i]);
+			free_slots_PE[i].write(free_slots_neighbor[i]);  // Initialize PE signals
 
-		NoximCoord position = id2Coord(local_id);
+		NoximCoord position = id2Coord(local_id);  // Get router position for buffer budget calculation
 
 		if ((position.x == 0 && position.y == 0 && position.z == 0) || (position.x == 7 && position.y == 7 && position.z == 7) ||
 			(position.x == 7 && position.y == 0 && position.z == 0) ||
@@ -565,14 +636,17 @@ void NoximRouter::bufferMonitor()
 			buf_budget = 0;
 	}
 	else {
-		// update current input buffers level to neighbors
+		// Normal operation: Update buffer status and send to neighbors
+		// Update current input buffer free slots (sent to neighbors for adaptive routing)
 		for (i = 0; i < DIRECTIONS + 1; i++)
-			free_slots[i].write(buffer[i][0].getCurrentFreeSlots());
-		// NoP selection: send neighbor info to each direction 'i'
-		NoximNoP_data current_NoP_data = getCurrentNoPData();
+			free_slots[i].write(buffer[i][0].getCurrentFreeSlots());  // Send current free slots
+		// NoP (Neighbor-on-Path) selection: send congestion info to each neighbor direction
+		NoximNoP_data current_NoP_data = getCurrentNoPData();  // Build NoP data structure
 
+		// Broadcast NoP data to all lateral neighbors
 		for (i = 0; i < DIRECTIONS; i++)
 			NoP_data_out[i].write(current_NoP_data);
+		// Broadcast NoP data vertically (for 3D NoC layer-to-layer communication)
 		vertical_free_slot_out.write(current_NoP_data);
 
 		for (int i = 0; i<4; i++)
@@ -584,19 +658,24 @@ void NoximRouter::bufferMonitor()
 	}
 }
 
+// routingFunction - Main routing function dispatcher
+// Selects and calls the appropriate routing algorithm based on global configuration
+// Returns a vector of candidate output port directions (can be 1 or more for adaptive routing)
 vector < int >NoximRouter::routingFunction(const NoximRouteData & route_data, int *south, int *east, int *vc)
 {
-	NoximCoord position = id2Coord(route_data.current_id);
-	NoximCoord src_coord = id2Coord(route_data.src_id);
-	NoximCoord dst_coord = id2Coord(route_data.dst_id);
+	// Extract coordinates from route data for routing computation
+	NoximCoord position = id2Coord(route_data.current_id);  // Current router position
+	NoximCoord src_coord = id2Coord(route_data.src_id);     // Source router position
+	NoximCoord dst_coord = id2Coord(route_data.dst_id);     // Destination router position
 	//bool downn=route_data.down;
-	int dir_in = route_data.dir_in;
-	int routing = route_data.routing;
-	int DW_layer = route_data.DW_layer;
-	int arr_mid = route_data.arr_mid;
+	int dir_in = route_data.dir_in;      // Input direction
+	int routing = route_data.routing;    // Routing algorithm ID
+	int DW_layer = route_data.DW_layer;  // Data width layer for 3D routing
+	int arr_mid = route_data.arr_mid;    // Flag: reached intermediate node
 	//int south         = route_data.south ;
 	//int east          = route_data.east ;
 
+	// Dispatch to appropriate routing algorithm based on global configuration
 	switch (NoximGlobalParams::routing_algorithm) {
 		/***ACCESS IC LAB's Routing Algorithm***/
 		//taheri
@@ -664,24 +743,32 @@ vector < int >NoximRouter::routingFunction(const NoximRouteData & route_data, in
 	return (vector < int >) (0);
 }
 
+// route - Main routing function that calls routing algorithm and applies thermal-aware filtering
+// Filters out throttled directions from candidate channels for thermal-aware routing
 int NoximRouter::route(const NoximRouteData & route_data, int *south, int *east, int *vc)
 {
+	// Check if destination reached
 	if (route_data.dst_id == route_data.current_id && route_data.arr_mid)
-		return DIRECTION_LOCAL;
+		return DIRECTION_LOCAL;  // Final destination, deliver to local PE
 	else if ((route_data.dst_id == route_data.current_id && !route_data.arr_mid))
-		return DIRECTION_SEMI_LOCAL;
+		return DIRECTION_SEMI_LOCAL;  // Intermediate destination, continue routing
+	
+	// Get candidate directions from routing algorithm
 	vector < int >candidate_channels = routingFunction(route_data, south, east, vc);
+	
+	// Thermal-aware filtering: remove throttled directions from candidates
 	for (int i = candidate_channels.size() - 1; i >= 0; i--) {
-		if (candidate_channels[i] < 4) //for lateral direction
-			if (on_off_neighbor[candidate_channels[i]].read() == 1) {//if the direction is throttled
+		if (candidate_channels[i] < 4) // Only check lateral directions (0-3: N,E,S,W)
+			if (on_off_neighbor[candidate_channels[i]].read() == 1) {  // If neighbor is throttled
 																	 //				if(candidate_channels.size() == 1)
 																	 //				break;
-				candidate_channels.erase(candidate_channels.begin() + i);//then erase that way	
+				candidate_channels.erase(candidate_channels.begin() + i);  // Remove throttled direction
 			}
 	}
 
-	NoximCoord position = id2Coord(local_id);
+	NoximCoord position = id2Coord(local_id);  // Get current router position
 
+	// Fallback: if all lateral directions are throttled, try vertical direction
 	if (candidate_channels.size() == 0) {
 		/*cout<<"no any candidate channels"<<endl;
 		if(!on_off_neighbor[DIRECTION_NORTH] && position.y > 0)//if the direction is not throttled
@@ -692,10 +779,12 @@ int NoximRouter::route(const NoximRouteData & route_data, int *south, int *east,
 		candidate_channels.push_back(DIRECTION_EAST);
 		if(!on_off_neighbor[DIRECTION_WEST] && position.x > 0)//if the direction is not throttled
 		candidate_channels.push_back(DIRECTION_WEST);*/
-		if (!on_off_neighbor[DIRECTION_DOWN] && position.z < NoximGlobalParams::mesh_dim_z-1)//if the direction is not throttled 
-			candidate_channels.push_back(DIRECTION_DOWN);
+		// Escape route: if all lateral directions throttled, try going down (toward heat sink)
+		if (!on_off_neighbor[DIRECTION_DOWN] && position.z < NoximGlobalParams::mesh_dim_z-1)
+			candidate_channels.push_back(DIRECTION_DOWN);  // Downward direction not throttled
 	}
-	//For beltway packet, push more dir into candidate_channels to achieve DBA.
+	// For beltway packet, push more directions into candidate_channels to achieve DBA (Dynamic Beltway Adaptation)
+	// Apply selection function to choose best direction from candidates (random, buffer level, NoP, etc.)
 	return selectionFunction(candidate_channels, route_data);
 }
 

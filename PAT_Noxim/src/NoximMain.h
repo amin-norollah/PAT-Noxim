@@ -22,32 +22,34 @@
 
 using namespace std;    
  
-// NoximGlobalParams -- used to forward configuration to every sub-block
+// NoximGlobalParams -- Global configuration parameters structure
+// This structure contains all simulation parameters that are accessible throughout the simulation
+// All members are static to allow global access without instantiation
 struct NoximGlobalParams {
-    static int                          verbose_mode;
-    static int                          trace_mode;
-    static char                         trace_filename[128];
-    static int                          mesh_dim_x;
-    static int                          mesh_dim_y;
-	static int                          mesh_dim_z;
-	static int                          num_vcs; 
-    static int                          buffer_depth; 
-    static int                          min_packet_size;
-    static int                          max_packet_size;
-    static int                          routing_algorithm;
-    static char                         routing_table_filename[128];
-    static int                          selection_strategy;
-    static float                        packet_injection_rate;
-    static float                        probability_of_retransmission;
-    static int                          traffic_distribution;
-    static char                         traffic_table_filename[128];
-    static int                          simulation_time;
-    static int                          stats_warm_up_time;
-    static int                          rnd_generator_seed;
-    static bool                         detailed;
-    static vector <pair <int, double> > hotspots;
-    static float                        dyad_threshold;
-    static unsigned int                 max_volume_to_be_drained;
+    static int                          verbose_mode;          // Verbosity level for console output
+    static int                          trace_mode;            // Whether to enable signal tracing
+    static char                         trace_filename[128];   // Filename for trace output
+    static int                          mesh_dim_x;            // X dimension of the 3D mesh NoC
+    static int                          mesh_dim_y;            // Y dimension of the 3D mesh NoC
+	static int                          mesh_dim_z;            // Z dimension of the 3D mesh NoC (layers)
+	static int                          num_vcs;               // Number of virtual channels per physical channel 
+    static int                          buffer_depth;              // Depth of input buffers in flits
+    static int                          min_packet_size;           // Minimum packet size in flits
+    static int                          max_packet_size;           // Maximum packet size in flits
+    static int                          routing_algorithm;         // Routing algorithm identifier (XY, WestFirst, etc.)
+    static char                         routing_table_filename[128]; // Filename for table-based routing configuration
+    static int                          selection_strategy;        // Output port selection strategy (random, buffer level, NoP, etc.)
+    static float                        packet_injection_rate;     // Probability of packet injection per cycle per node
+    static float                        probability_of_retransmission; // Probability of retransmitting a packet
+    static int                          traffic_distribution;      // Traffic pattern type (uniform, hotspot, transpose, etc.)
+    static char                         traffic_table_filename[128];  // Filename for table-based traffic configuration
+    static int                          simulation_time;           // Total simulation time in cycles
+    static int                          stats_warm_up_time;        // Warm-up period before statistics collection starts
+    static int                          rnd_generator_seed;        // Random number generator seed for reproducibility
+    static bool                         detailed;                  // Whether to show detailed statistics
+    static vector <pair <int, double> > hotspots;                  // List of hotspot nodes with their injection rates
+    static float                        dyad_threshold;            // Threshold for DyAD (Dynamic XY) routing algorithm
+    static unsigned int                 max_volume_to_be_drained;  // Maximum volume of flits to be drained before stopping
 
 	static int                          dw_layer_sel;
 	static int                          burst_length;
@@ -86,48 +88,56 @@ struct NoximGlobalParams {
 
 
 
-// NoximCoord -- XY coordinates type of the Tile inside the Mesh
+// NoximCoord -- 3D coordinate structure for tiles in the mesh
+// Represents the position (x, y, z) of a tile/node in the 3D Network-on-Chip mesh
 class NoximCoord {
   public:
-    int x;			// X coordinate
-    int y;			// Y coordinate
-	int z;          // Z coordinate
+    int x;			// X coordinate (horizontal position in the mesh)
+    int y;			// Y coordinate (vertical position in the mesh)
+	int z;          // Z coordinate (layer/vertical position in 3D stack)
 	
+    // Equality operator to compare two coordinates
     inline bool operator ==(const NoximCoord & coord) const {
 		return (coord.x == x && coord.y == y && coord.z == z);
 }};
 
-// NoximFlitType -- Flit type enumeration
+// NoximFlitType -- Enumeration defining the types of flits in a packet
+// Packets are divided into flits: HEAD (first), BODY (middle), and TAIL (last)
 enum NoximFlitType {
-    FLIT_TYPE_HEAD, FLIT_TYPE_BODY, FLIT_TYPE_TAIL
+    FLIT_TYPE_HEAD,  // First flit of a packet - contains routing information
+    FLIT_TYPE_BODY,  // Middle flit(s) of a packet - contains payload data
+    FLIT_TYPE_TAIL   // Last flit of a packet - marks end of packet
 };
 
-// NoximPayload -- Payload definition
+// NoximPayload -- Data payload structure carried by flits
+// Contains the actual data being transmitted through the network
 struct NoximPayload {
-    sc_uint<32> data;	// Bus for the data to be exchanged
+    sc_uint<32> data;	// 32-bit data bus for the payload information
 
+    // Equality operator to compare payloads
     inline bool operator ==(const NoximPayload & payload) const {
 	return (payload.data == data);
 }};
 
-// NoximPacket -- Packet definition
+// NoximPacket -- Packet structure containing all information about a network packet
+// Packets are the logical units of data that are broken into flits for transmission
 struct NoximPacket {
-    int vc;
-    int south;
-    int east;
-	int test_id;
-    int    src_id;
-    int    dst_id;
-	int    mid_id;          // intermedium node id 
-    double timestamp;		// SC timestamp at packet generation
-	double timestamp_ni;
-	double timestamp_nw;
-    int    size;
-    int    flit_left;		// Number of remaining flits inside the packet
-	int    routing;
-	int    DW_layer;
-	bool   arr_mid;         //record whether this pkt arrive the intermediate node. 0: No 1: Yes
-	bool   beltway;
+    int vc;                  // Virtual channel assigned to this packet
+    int south;               // Routing hint for south direction
+    int east;                // Routing hint for east direction
+	int test_id;             // Test/debugging identifier
+    int    src_id;           // Source node ID in the mesh
+    int    dst_id;           // Final destination node ID
+	int    mid_id;           // Intermediate node ID (for multi-path routing)
+    double timestamp;        // SystemC timestamp when packet was generated
+	double timestamp_ni;     // Timestamp when packet entered network interface
+	double timestamp_nw;     // Timestamp when packet entered network (router)
+    int    size;             // Total size of packet in flits
+    int    flit_left;        // Number of remaining flits inside the packet (countdown)
+	int    routing;          // Routing algorithm used for this packet
+	int    DW_layer;         // Data width layer selection (for 3D NoCs)
+	bool   arr_mid;          // Flag: whether this packet has arrived at intermediate node (0: No, 1: Yes)
+	bool   beltway;          // Flag: whether this packet uses beltway routing
     
     // Constructors
     NoximPacket() {
@@ -152,32 +162,38 @@ struct NoximPacket {
     }
 };
 
-// NoximRouteData -- data required to perform routing
+// NoximRouteData -- Routing decision data structure
+// Contains all information needed by a router to make routing decisions
 struct NoximRouteData {
-    int  current_id;
-    int  src_id    ;
-    int  dst_id    ;
-	int  mid_id    ;
-    int  dir_in    ;	// direction from which the packet comes from
-	int  routing   ;
-	int  DW_layer  ;
-	bool arr_mid   ;    //record whether this flit arrive the intermediate node 
+    int  current_id;     // ID of the current router making the routing decision
+    int  src_id    ;     // Source node ID where the packet originated
+    int  dst_id    ;     // Final destination node ID
+	int  mid_id    ;     // Intermediate node ID (for multi-path routing)
+    int  dir_in    ;     // Input direction from which the packet entered this router
+	int  routing   ;     // Routing algorithm type to be used
+	int  DW_layer  ;     // Data width layer selection (for 3D routing)
+	bool arr_mid   ;     // Flag: whether this flit has arrived at the intermediate node
 };
 
+// NoximChannelStatus -- Status information about a communication channel
+// Used to communicate buffer availability and channel state between neighboring routers
 struct NoximChannelStatus {
-    int    free_slots;		// occupied buffer slots
-    int f_slots;
-    bool   available;		// 
-	bool   throttle;        //Foster
+    int    free_slots;      // Number of free buffer slots available in the channel
+    int f_slots;            // Alternative free slots representation
+    bool   available;       // Whether the channel is currently available for transmission
+	bool   throttle;        // Throttling flag (indicates if channel is throttled due to thermal/emergency)
+    // Equality operator for channel status comparison
     inline bool operator ==(const NoximChannelStatus & bs) const {
 		return (free_slots == bs.free_slots && available == bs.available);
     };
 };
 
-// NoximNoP_data -- NoP Data definition
+// NoximNoP_data -- Neighbor-on-Path (NoP) data structure
+// Contains congestion information from neighboring routers used for adaptive routing decisions
+// Routers exchange this data to make informed routing choices based on network conditions
 struct NoximNoP_data {
-    int sender_id;
-    NoximChannelStatus channel_status_neighbor[DIRECTIONS];
+    int sender_id;                                          // ID of the router sending this NoP data
+    NoximChannelStatus channel_status_neighbor[DIRECTIONS]; // Buffer status for each neighboring direction
 
     inline bool operator ==(const NoximNoP_data & nop_data) const {
 	return (sender_id == nop_data.sender_id &&
@@ -189,28 +205,29 @@ struct NoximNoP_data {
     };
 };
 
-// NoximFlit -- Flit definition
+// NoximFlit -- Flit data structure (smallest unit of data transmitted through the network)
+// Flits are fragments of packets that flow through routers and links
 struct NoximFlit {
-    int vc;
-    int south;
-    int east;
-	int			  test_id;
-    int           src_id     ;
-    int           dst_id     ;
-	int           mid_id     ;
-    NoximFlitType flit_type  ;		// The flit type (FLIT_TYPE_HEAD, FLIT_TYPE_BODY, FLIT_TYPE_TAIL)
-    int           sequence_no;		// The sequence number of the flit inside the packet
-    NoximPayload  payload    ;		// Optional payload
-    double        timestamp  ;		// Unix timestamp at packet generation
-	double 		  timestamp_ni;
-	double 		  timestamp_nw;
-    int           hop_no     ;		// Current number of hops from source to destination
-	int           routing_f  ;
-	int           DW_layer   ;
-	int           waiting_cnt;      //for counting contention waiting time
-	bool          arr_mid    ;
-	bool          beltway    ;
-	int			  pre_routing;
+    int vc;                  // Virtual channel this flit is using
+    int south;               // Pre-computed routing hint for south direction
+    int east;                // Pre-computed routing hint for east direction
+	int			  test_id;    // Test/debugging identifier
+    int           src_id     ;  // Source node ID where the packet originated
+    int           dst_id     ;  // Final destination node ID
+	int           mid_id     ;  // Intermediate node ID (for multi-path routing)
+    NoximFlitType flit_type  ;  // Type of flit: HEAD, BODY, or TAIL
+    int           sequence_no;  // Sequence number indicating position of this flit within the packet
+    NoximPayload  payload    ;  // Payload data carried by this flit
+    double        timestamp  ;  // Timestamp when the packet was generated (in SystemC time)
+	double 		  timestamp_ni; // Timestamp when packet entered network interface
+	double 		  timestamp_nw; // Timestamp when packet entered the network (first router)
+    int           hop_no     ;  // Current number of hops this flit has traveled from source
+	int           routing_f  ;  // Routing function/algorithm being used
+	int           DW_layer   ;  // Data width layer selection (for 3D NoCs)
+	int           waiting_cnt;  // Counter for cycles spent waiting due to contention/blocking
+	bool          arr_mid    ;  // Flag: whether this flit has arrived at intermediate node
+	bool          beltway    ;  // Flag: whether this flit uses beltway routing path
+	int			  pre_routing; // Pre-computed routing direction for next hop
 	
 	inline bool operator ==(const NoximFlit & flit) const {
 	return (flit.src_id == src_id && flit.dst_id == dst_id
@@ -221,7 +238,8 @@ struct NoximFlit {
 		&& flit.vc == vc);
 }};
 
-//
+// Utility function to get the current simulation cycle number
+// Converts SystemC simulation time to cycle number based on CYCLE_PERIOD
 inline int getCurrentCycleNum(){
 	return (int)(sc_time_stamp().to_double()/1000/CYCLE_PERIOD);
 };
@@ -332,14 +350,20 @@ inline void sc_trace(sc_trace_file * &tf, const NoximChannelStatus & bs, string 
 
 // Misc common functions
 
+// Convert node ID to 3D coordinates (x, y, z)
+// Node IDs are assigned sequentially: layer 0 first (row by row), then layer 1, etc.
 inline NoximCoord id2Coord(int id)
 {
     NoximCoord coord;
 
-    coord.z = id / (NoximGlobalParams::mesh_dim_x*NoximGlobalParams::mesh_dim_y);////
+    // Calculate Z coordinate (which layer/stack level)
+    coord.z = id / (NoximGlobalParams::mesh_dim_x*NoximGlobalParams::mesh_dim_y);
+    // Calculate Y coordinate (which row in the current layer)
     coord.y = (id-coord.z*NoximGlobalParams::mesh_dim_x*NoximGlobalParams::mesh_dim_y) /NoximGlobalParams::mesh_dim_x;
+    // Calculate X coordinate (which column in the current row)
     coord.x = (id-coord.z*NoximGlobalParams::mesh_dim_x*NoximGlobalParams::mesh_dim_y)  % NoximGlobalParams::mesh_dim_x;
 
+    // Validate that coordinates are within mesh boundaries
     assert(coord.x < NoximGlobalParams::mesh_dim_x);
     assert(coord.y < NoximGlobalParams::mesh_dim_y);
 	assert(coord.z < NoximGlobalParams::mesh_dim_z);
@@ -347,13 +371,20 @@ inline NoximCoord id2Coord(int id)
     return coord;
 }
 
+// Convert 3D coordinates (x, y, z) to node ID
+// Inverse operation of id2Coord: computes unique node ID from position in mesh
 inline int coord2Id(const NoximCoord & coord)
 {
+	// Formula: id = z*(X*Y) + y*X + x
+	// This gives a unique ID for each position in the 3D mesh
 	int id = coord.z*NoximGlobalParams::mesh_dim_x*NoximGlobalParams::mesh_dim_y + (coord.y * NoximGlobalParams::mesh_dim_x) + coord.x; 
+    // Validate that computed ID is within valid range
     assert(id < NoximGlobalParams::mesh_dim_x * NoximGlobalParams::mesh_dim_y * NoximGlobalParams::mesh_dim_z); 
     return id;
 }
 
+// Alternative function to convert x, y, z coordinates to node ID
+// Same as coord2Id but takes individual parameters instead of NoximCoord structure
 inline int xyz2Id( int x, int y, int z){
 	return z * NoximGlobalParams::mesh_dim_x*NoximGlobalParams::mesh_dim_y + y * NoximGlobalParams::mesh_dim_x + x;
 }
