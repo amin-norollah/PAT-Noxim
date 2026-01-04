@@ -87,9 +87,27 @@ To install the PAT-Noxim, you need to follow a few simple steps.
 	$ make
     $ make install
 
-Description of simulator components
-------------
-Some of the main simulator files are listed in the following table:
+## Comprehensive Documentation
+
+**We have created extensive documentation to help both users and developers!**
+
+All documentation is located in the **`docs/`** folder with the following guides:
+
+### Quick Start Guides
+- **[docs/INDEX.md](docs/INDEX.md)** - Navigation guide to all documentation
+- **[docs/INSTALLATION.md](docs/INSTALLATION.md)** - Complete installation and setup guide
+- **[docs/RUNNING_SIMULATIONS.md](docs/RUNNING_SIMULATIONS.md)** - Examples from basic to advanced simulations
+
+### Configuration & Reference
+- **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** - All configuration parameters and options
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture and design overview
+
+### For Developers
+- **[docs/FILE_GUIDE.md](docs/FILE_GUIDE.md)** - Detailed description of each source file
+- **[docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)** - How to modify and extend PAT-Noxim
+- **[docs/MODELLING.md](docs/MODELLING.md)** - Power (ORION) and Thermal (Hotspot) model details
+
+### Key Files Quick Reference
 
 Files | Description
 --- | ---
@@ -102,6 +120,11 @@ NoximVLink.cpp | Determines the policy of communication between the tiles in the
 NoximTile.h | Defining and connecting components of a tile, consisting of the router and the PE
 NoximVCState.cpp | Defines the virtual channel states on the router
 NoximPower.cpp | The power consumption and the area of the network components are calculated in this section
+
+**For complete file descriptions, see [docs/FILE_GUIDE.md](docs/FILE_GUIDE.md)**
+
+Description of simulator components
+-----------
 
 
 
