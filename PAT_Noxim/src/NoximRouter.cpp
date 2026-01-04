@@ -743,6 +743,22 @@ vector < int >NoximRouter::routingFunction(const NoximRouteData & route_data, in
 	return (vector < int >) (0);
 }
 
+/* FAULT-TOLERANT ROUTING IMPLEMENTATION SUGGESTION:
+ * To add fault-tolerant routing in Noxim, follow this approach: (1) Add fault status signals similar to thermal throttling:
+ * declare sc_out<bool> fault_status[DIRECTIONS] and sc_in<bool> fault_neighbor[DIRECTIONS] in NoximRouter.h to propagate
+ * fault information (router/link failures) between neighbors, (2) Implement fault detection mechanism: add a fault detection
+ * process that monitors link health (timeouts, CRC errors, handshake failures) and sets fault_status signals accordingly,
+ * (3) Modify the route() function: after thermal filtering (line 760-767), add fault filtering that removes candidate channels
+ * where fault_neighbor[direction].read() == true, similar to how throttled directions are filtered, (4) Use adaptive routing
+ * algorithms: prefer ROUTING_FULLY_ADAPTIVE or ROUTING_ODD_EVEN which provide multiple alternative paths, allowing packets to
+ * detour around faults, (5) Implement fallback mechanism: if all candidate directions are faulty, use a backup routing algorithm
+ * (e.g., switch from fully adaptive to XY routing with fault avoidance) or implement a fault-aware routing table that pre-computes
+ * alternative paths, (6) Add fault recovery: periodically re-check fault status to allow routing through previously faulty links
+ * if they recover, and (7) Consider deadlock prevention: ensure fault-tolerant routing maintains deadlock freedom by using turn
+ * models or virtual channel partitioning even when avoiding faults. The key is leveraging the existing thermal-aware filtering
+ * infrastructure and extending it to handle permanent/temporary faults while maintaining connectivity through alternative paths.
+ */
+
 // route - Main routing function that calls routing algorithm and applies thermal-aware filtering
 // Filters out throttled directions from candidate channels for thermal-aware routing
 int NoximRouter::route(const NoximRouteData & route_data, int *south, int *east, int *vc)
